@@ -8,7 +8,9 @@
 // Native-only tooling: the `pgn` module (and its `pgn-reader` dep) is excluded
 // from WASM builds, so this binary is a no-op when targeting wasm32.
 #[cfg(target_arch = "wasm32")]
-fn main() {}
+fn main() {
+    compile_error!("This script is not setup for wasm")
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> std::process::ExitCode {
@@ -20,7 +22,7 @@ mod native {
     use std::io::{self, Read, Write};
     use std::process::ExitCode;
 
-    use personal_chess_engine::pgn::pgn_to_uci_lines;
+    use engine::pgn::pgn_to_uci_lines;
 
     pub fn run() -> ExitCode {
         let pgn = match read_input() {

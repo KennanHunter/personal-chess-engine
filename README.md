@@ -10,7 +10,7 @@ A small chaotic chess bot compiled to WebAssembly based on my games using weight
    samples one proportionally to its weight (base weight `1.0`, so any legal
    move can still happen).
 
-Heuristics (see [`src/heuristics.rs`](src/heuristics.rs)): ladder mate,
+Heuristics (see [`crates/engine/src/heuristics.rs`](crates/engine/src/heuristics.rs)): ladder mate,
 knight-for-bishop trades, knights eyeing bishops, knight forks, knights
 approaching f6/f3, and revisiting positions seen in your games. Each has a
 tunable weight in `PersonalityWeights`, owned by the WASM layer and passed in on
@@ -36,11 +36,11 @@ live from JS via `bot.set_weights(...)`.
 
 ```bash
 cargo install wasm-pack
-wasm-pack build --target web --release --scope kennanhunter
+wasm-pack build crates/web --target web --release --scope kennanhunter
 ```
 
 ```ts
-import init, { ChessBot } from './pkg/chess_engine.js';
+import init, { ChessBot } from './crates/web/pkg/personal_chess_engine.js';
 await init();
 
 const bot = new ChessBot();
@@ -53,7 +53,7 @@ const move = bot.get_move('e2e4,e7e5'); // -> e.g. "g1f3", or "" if game over
 the bundled converter to turn a PGN export into that format:
 
 ```bash
-cargo run --bin convert_pgn -- kennan.pgn > src/games.txt
+cargo run --bin convert_pgn -- kennan.pgn > crates/web/src/games.txt
 ```
 
 ## Test

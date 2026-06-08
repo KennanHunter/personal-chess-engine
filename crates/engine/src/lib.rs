@@ -1,6 +1,5 @@
 mod heuristics;
 mod opening;
-mod utils;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pgn;
@@ -10,7 +9,6 @@ use std::collections::HashSet;
 use shakmaty::uci::UciMove;
 use shakmaty::zobrist::Zobrist64;
 use shakmaty::{CastlingMode, Chess, EnPassantMode, Move, Position};
-use wasm_bindgen::prelude::*;
 
 use heuristics::{score_move, PersonalityWeights};
 use opening::OpeningNode;
@@ -59,7 +57,6 @@ fn weighted_sample(moves: &[Move], weights: &[f32]) -> Move {
     *moves.last().expect("called weighted_sample on no moves")
 }
 
-#[wasm_bindgen]
 pub struct ChessBot {
     opening_tree: OpeningNode,
     seen_positions: HashSet<u64>,
@@ -76,23 +73,17 @@ impl Default for ChessBot {
     }
 }
 
-#[wasm_bindgen]
 impl ChessBot {
-    #[wasm_bindgen(constructor)]
     pub fn new() -> ChessBot {
-        utils::set_panic_hook();
+        
 
-        let mut bot = ChessBot::default();
-
-        bot.load_games(include_str!("games.txt"));
-
-        bot
+        ChessBot::default()
     }
 
     /// Load game histories: one game per line, each a comma-separated UCI move
     /// string (e.g. `"e2e4,e7e5,g1f3"`). Feeds both the opening book and the
     /// seen-position set.
-    fn load_games(&mut self, data: &str) {
+    pub fn load_games(&mut self, data: &str) {
         for line in data.lines() {
             let line = line.trim();
             if line.is_empty() {

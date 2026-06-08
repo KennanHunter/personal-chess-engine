@@ -1,0 +1,16 @@
+[package]
+name = "engine"
+version = "0.1.1"
+authors = ["Kennan Hunter <kennanhunter5@gmail.com>"]
+edition = "2021"
+repository = "https://github.com/KennanHunter/cargo"
+
+[dependencies]
+shakmaty = "0.30"
+# `getrandom`'s `js` backend is enabled by the `web` crate for WASM builds;
+# feature unification means this dependency picks it up there automatically.
+getrandom = { version = "0.2" }
+
+# Only used by the native PGN-conversion tooling / tests, not in the WASM build.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pgn-reader = "0.29"

@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use shakmaty::zobrist::Zobrist64;
-use shakmaty::{CastlingSide, Chess, Color, EnPassantMode, Move, Position, Rank, Role, Square, attacks};
+use shakmaty::{Chess, Color, EnPassantMode, Move, Position, Rank, Role, Square, attacks};
 
 /// Tunable weights for each heuristic. Owned by the WASM layer and passed into
 /// every move evaluation, so personality can be adjusted live from JS.
@@ -31,6 +31,8 @@ pub struct PersonalityWeights {
     /// Castling
     pub castling: f32,
     /// Depth
+    // TODO:
+    #[allow(dead_code)]
     pub depth: u32,
 }
 

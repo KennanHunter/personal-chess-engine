@@ -106,7 +106,7 @@ impl OpeningNode {
             }
         }
 
-        node.children.iter().map(|(_, child_node)| child_node.1).sum()
+        node.children.values().map(|child_node| child_node.1).sum()
     }
 }
 
