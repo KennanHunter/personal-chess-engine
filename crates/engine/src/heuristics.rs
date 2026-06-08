@@ -75,15 +75,64 @@ impl Default for PersonalityConfig {
     }
 }
 
-#[derive(Serialize, Clone, Copy)]
-pub struct ConsiderationScore {
+/// Heuristics that depend only on the resulting position (not on the specific
+/// move that produced it). These can be evaluated for any side and serve as the
+/// static leaf evaluation for the tree search.
+#[derive(Serialize, Clone, Copy, Default)]
+pub struct PositionScore {
     checkmate_score: f32,
     material_score: f32,
     ladder_mate_score: f32,
-    knight_bishop_trade_score: f32,
     knight_eyeing_bishop_score: f32,
-    knight_fork_score: f32,
     knight_approaching_f6_score: f32,
+}
+
+impl PositionScore {
+    pub fn score(&self) -> f32 {
+        // if we ever forget to update this we get an error
+        let PositionScore {
+            checkmate_score,
+            material_score,
+            ladder_mate_score,
+            knight_eyeing_bishop_score,
+            knight_approaching_f6_score,
+        } = self;
+
+        checkmate_score
+            + material_score
+            + ladder_mate_score
+            + knight_eyeing_bishop_score
+            + knight_approaching_f6_score
+    }
+
+    /// Flip the score to the opposing side's perspective.
+    pub fn negated(&self) -> PositionScore {
+        PositionScore {
+            checkmate_score: -self.checkmate_score,
+            material_score: -self.material_score,
+            ladder_mate_score: -self.ladder_mate_score,
+            knight_eyeing_bishop_score: -self.knight_eyeing_bishop_score,
+            knight_approaching_f6_score: -self.knight_approaching_f6_score,
+        }
+    }
+
+    /// A decisive checkmate score: positive when the side we are scoring for
+    /// delivered the mate, negative when it was mated.
+    pub fn checkmate(delivered: bool) -> PositionScore {
+        PositionScore {
+            checkmate_score: if delivered { 1000.0 } else { -1000.0 },
+            ..PositionScore::default()
+        }
+    }
+}
+
+/// Heuristics for a candidate move: the position-based [`PositionScore`] of the
+/// resulting position plus heuristics that judge the move itself.
+#[derive(Serialize, Clone, Copy)]
+pub struct ConsiderationScore {
+    position_score: PositionScore,
+    knight_bishop_trade_score: f32,
+    knight_fork_score: f32,
     castling_score: f32,
     developed_major_pieces_score: f32,
 }
@@ -92,34 +141,41 @@ impl ConsiderationScore {
     pub fn score(&self) -> f32 {
         // if we ever forget to update this we get an error
         let ConsiderationScore {
-            checkmate_score,
-            material_score,
-            ladder_mate_score,
+            position_score,
             knight_bishop_trade_score,
-            knight_eyeing_bishop_score,
             knight_fork_score,
-            knight_approaching_f6_score,
             castling_score,
             developed_major_pieces_score,
         } = self;
 
-        checkmate_score
-            + material_score
-            + ladder_mate_score
+        position_score.score()
             + knight_bishop_trade_score
-            + knight_eyeing_bishop_score
             + knight_fork_score
-            + knight_approaching_f6_score
             + castling_score
             + developed_major_pieces_score
     }
 }
 
-/// Combine every heuristic into a single bonus score for a candidate move.
+/// Position-only heuristics for `after`, scored from `side`'s perspective.
 ///
-/// `before` is the position to move in, `m` the candidate move, and `after` the
-/// position that results from playing it. `seen` is the set of Zobrist hashes
-/// of positions from game history.
+/// Used both as the position component of a move's [`ConsiderationScore`] and as
+/// the static leaf evaluation for the tree search.
+pub fn position_score_for_move(
+    after: &Chess,
+    side: Color,
+    weights: &PersonalityConfig,
+) -> PositionScore {
+    PositionScore {
+        checkmate_score: if after.is_checkmate() { 100.0 } else { 0.0 },
+        material_score: score_material(after, side) * weights.material_weight,
+        ladder_mate_score: score_ladder_mate(after, side) * weights.ladder_mate_weight,
+        knight_eyeing_bishop_score: score_knight_eyeing_bishop(after, side)
+            * weights.knight_eyeing_bishop_weight,
+        knight_approaching_f6_score: score_knight_approaching_f6(after, side)
+            * weights.knight_approaching_f6_weight,
+    }
+}
+
 pub fn consideration_score_for_move(
     before: &Chess,
     m: &Move,
@@ -128,18 +184,13 @@ pub fn consideration_score_for_move(
 ) -> ConsiderationScore {
     let side = before.turn();
     ConsiderationScore {
-        checkmate_score: if after.is_checkmate() { 100.0 } else { 0.0 },
-        material_score: score_material(after, side) * weights.material_weight,
-        ladder_mate_score: score_ladder_mate(after, side) * weights.ladder_mate_weight,
+        position_score: position_score_for_move(after, side, weights),
         knight_bishop_trade_score: score_knight_bishop_trade(before, after)
             * weights.knight_bishop_trade_weight,
-        knight_eyeing_bishop_score: score_knight_eyeing_bishop(after)
-            * weights.knight_eyeing_bishop_weight,
         knight_fork_score: score_knight_fork(before, m, after) * weights.knight_fork_weight,
-        knight_approaching_f6_score: score_knight_approaching_f6(after)
-            * weights.knight_approaching_f6_weight,
         castling_score: score_did_castle(m) * weights.castling_weight,
-        developed_major_pieces_score: score_developed_major_pieces(m, side).unwrap_or(0.0) * weights.developed_major_pieces_weight,
+        developed_major_pieces_score: score_developed_major_pieces(m, side).unwrap_or(0.0)
+            * weights.developed_major_pieces_weight,
     }
 }
 
@@ -209,11 +260,9 @@ pub fn score_knight_bishop_trade(before: &Chess, after: &Chess) -> f32 {
     }
 }
 
-/// Reward one of our knights attacking an enemy bishop in the resulting position.
-pub fn score_knight_eyeing_bishop(after: &Chess) -> f32 {
-    // `after` is the opponent's turn, so the side that just moved is `!turn`.
-    let side = !after.turn();
-    let opp = after.turn();
+/// Reward `side`'s knights attacking an enemy bishop in the resulting position.
+pub fn score_knight_eyeing_bishop(after: &Chess, side: Color) -> f32 {
+    let opp = !side;
     let board = after.board();
 
     let our_knights = board.knights() & board.by_color(side);
@@ -249,9 +298,8 @@ pub fn score_knight_fork(before: &Chess, m: &Move, after: &Chess) -> f32 {
     }
 }
 
-/// Reward knights that are a single hop from f6 (white) or f3 (black).
-pub fn score_knight_approaching_f6(after: &Chess) -> f32 {
-    let side = !after.turn();
+/// Reward `side`'s knights that are a single hop from f6 (white) or f3 (black).
+pub fn score_knight_approaching_f6(after: &Chess, side: Color) -> f32 {
     let board = after.board();
     let our_knights = board.knights() & board.by_color(side);
 

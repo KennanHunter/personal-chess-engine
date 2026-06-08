@@ -1,4 +1,4 @@
-use crate::heuristics::ConsiderationScore;
+use crate::heuristics::{ConsiderationScore, PositionScore};
 use serde::Serialize;
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Move};
@@ -27,7 +27,8 @@ impl PossibleMove {
             EvalReason::Considered {
                 consideration_score,
                 tree_score,
-            } => consideration_score.score() + tree_score,
+                depth_searched: _,
+            } => consideration_score.score() + tree_score.score(),
             EvalReason::Pruned {
                 consideration_score,
             } => consideration_score.score(),
@@ -50,7 +51,8 @@ pub enum EvalReason {
     },
     Considered {
         consideration_score: ConsiderationScore,
-        tree_score: f32,
+        tree_score: PositionScore,
+        depth_searched: u32,
     },
     Pruned {
         consideration_score: ConsiderationScore,

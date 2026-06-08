@@ -5,12 +5,15 @@ pub mod move_possibility;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pgn;
 
-use heuristics::{ConsiderationScore, PersonalityConfig, consideration_score_for_move};
+use heuristics::{
+    ConsiderationScore, PersonalityConfig, PositionScore, consideration_score_for_move,
+    position_score_for_move,
+};
 use move_possibility::{EvalReason, PossibleMove};
 use opening::OpeningNode;
 use shakmaty::uci::UciMove;
 use shakmaty::zobrist::Zobrist64;
-use shakmaty::{Chess, EnPassantMode, Move, Position};
+use shakmaty::{Chess, Color, EnPassantMode, Move, Position, Role};
 use std::collections::HashSet;
 
 /// Replay a comma-separated UCI move history into a position.
@@ -238,11 +241,14 @@ impl ChessBot {
         ));
 
         for (m, consideration_score) in moves_to_consider {
+            let after = pos.clone().play(*m).expect("legal move failed to play");
+            let (tree_score, depth_searched) = self.tree_score_for_move(&pos, &after);
             final_moves.push(PossibleMove {
                 m: *m,
                 eval_reason: EvalReason::Considered {
                     consideration_score: *consideration_score,
-                    tree_score: todo!("Calculate minmax for this move"),
+                    tree_score,
+                    depth_searched,
                 },
             });
         }
@@ -261,6 +267,136 @@ impl ChessBot {
 
     pub fn get_temperature(&self) -> f32 {
         self.personality_config.temperature
+    }
+}
+
+/// Does this move capture a major piece (knight, bishop, rook, or queen)?
+///
+/// Capturing one of these extends the tree search beyond `min_depth`.
+fn is_major_capture(m: &Move) -> bool {
+    matches!(
+        m.capture(),
+        Some(Role::Knight | Role::Bishop | Role::Rook | Role::Queen)
+    )
+}
+
+impl ChessBot {
+    /// Minmax tree score for a top-level considered move.
+    ///
+    /// `before` is the position before the move and `after` the position after
+    /// it (opponent to move). The maximizing side is whoever moved at the top
+    /// level.
+    fn tree_score_for_move(&self, before: &Chess, after: &Chess) -> (PositionScore, u32) {
+        self.minmax(after, before.turn(), 1)
+    }
+
+    /// Recursive minmax search from `pos`, scoring from `maximizing_side`'s view.
+    ///
+    /// Returns `(position_score, deepest_depth_reached)`, where the score is the
+    /// leaf [`PositionScore`] at the end of the principal variation, always from
+    /// `maximizing_side`'s perspective. Every branch recurses at least
+    /// `min_depth` deep. Past that it keeps going only while a major-piece
+    /// capture is available (a quiescence-style extension), stopping once no
+    /// such capture exists or `max_depth` is hit.
+    fn minmax(&self, pos: &Chess, maximizing_side: Color, depth: u32) -> (PositionScore, u32) {
+        let cfg = &self.personality_config;
+
+        if pos.is_checkmate() {
+            // The side to move has been mated; good for us only if it isn't us.
+            let delivered = pos.turn() != maximizing_side;
+            return (PositionScore::checkmate(delivered), depth);
+        }
+
+        let legals = pos.legal_moves();
+        if legals.is_empty() {
+            // Stalemate or other drawn terminal position.
+            return (PositionScore::default(), depth);
+        }
+
+        let has_major_capture = legals.iter().any(is_major_capture);
+        let reached_min = depth >= cfg.min_depth;
+        let reached_max = depth >= cfg.max_depth;
+        if reached_max || (reached_min && !has_major_capture) {
+            return (self.leaf_eval(pos, maximizing_side), depth);
+        }
+
+        let candidates = self.candidate_moves(pos, &legals);
+        let maximizing = pos.turn() == maximizing_side;
+        let mut best: Option<PositionScore> = None;
+        let mut deepest = depth;
+
+        for cm in candidates {
+            let child = pos.clone().play(cm).expect("legal move failed to play");
+            let (score, child_depth) = self.minmax(&child, maximizing_side, depth + 1);
+            deepest = deepest.max(child_depth);
+            let better = match best {
+                None => true,
+                Some(b) if maximizing => score.score() > b.score(),
+                Some(b) => score.score() < b.score(),
+            };
+            if better {
+                best = Some(score);
+            }
+        }
+
+        // `candidates` is non-empty whenever `legals` is, but fall back to a
+        // static eval if a degenerate config produced no candidates.
+        let best = best.unwrap_or_else(|| self.leaf_eval(pos, maximizing_side));
+        (best, deepest)
+    }
+
+    /// Static evaluation of a leaf position from `maximizing_side`'s view.
+    ///
+    /// Reuses only the position-based heuristics (`position_score_for_move`), so
+    /// the tree search preserves personality at depth without crediting the
+    /// transient move-based bonuses of whatever move happened to reach the leaf.
+    /// The score is computed from the mover's (`!pos.turn()`) perspective, so we
+    /// negate it when the opponent made the move.
+    fn leaf_eval(&self, pos: &Chess, maximizing_side: Color) -> PositionScore {
+        let mover = !pos.turn();
+        let score = position_score_for_move(pos, mover, &self.personality_config);
+        if mover == maximizing_side {
+            score
+        } else {
+            score.negated()
+        }
+    }
+
+    /// Pick the moves to search at one tree node.
+    ///
+    /// Major-piece captures are taken first, up to `max_moves_to_consider_in_tree`.
+    /// If that leaves fewer than `min_moves_to_consider_in_tree` moves, the list
+    /// is topped up with the highest `consideration_score_for_move` moves.
+    fn candidate_moves(&self, pos: &Chess, legals: &[Move]) -> Vec<Move> {
+        let cfg = &self.personality_config;
+        let max_captures = cfg.max_moves_to_consider_in_tree as usize;
+        let min_moves = cfg.min_moves_to_consider_in_tree as usize;
+
+        let mut chosen: Vec<Move> = Vec::new();
+        for m in legals.iter().filter(|m| is_major_capture(m)) {
+            if chosen.len() >= max_captures {
+                break;
+            }
+            chosen.push(*m);
+        }
+
+        if chosen.len() < min_moves {
+            let mut scored: Vec<(Move, f32)> = legals
+                .iter()
+                .filter(|m| !chosen.contains(m))
+                .map(|m| {
+                    let after = pos.clone().play(*m).expect("legal move failed to play");
+                    let score = consideration_score_for_move(pos, m, &after, cfg).score();
+                    (*m, score)
+                })
+                .collect();
+            scored.sort_by(|(_, a), (_, b)| b.total_cmp(a));
+            for (m, _) in scored.into_iter().take(min_moves - chosen.len()) {
+                chosen.push(m);
+            }
+        }
+
+        chosen
     }
 }
 
