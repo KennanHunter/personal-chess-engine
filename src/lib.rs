@@ -114,6 +114,8 @@ impl ChessBot {
         knight_approaching_f6: f32,
         seen_position: f32,
         opener_temperature: f32,
+        castling: f32,
+        depth: u32,
     ) {
         self.weights = PersonalityWeights {
             ladder_mate,
@@ -123,6 +125,8 @@ impl ChessBot {
             knight_approaching_f6,
             seen_position,
             opener_temperature,
+            castling,
+            depth,
         };
     }
 

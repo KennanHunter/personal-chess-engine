@@ -29,7 +29,9 @@ pub struct PersonalityWeights {
     /// Spread of opener randomness
     pub opener_temperature: f32,
     /// Castling
-    pub castling: f32
+    pub castling: f32,
+    /// Depth
+    pub depth: u32,
 }
 
 impl Default for PersonalityWeights {
@@ -43,6 +45,7 @@ impl Default for PersonalityWeights {
             seen_position: 2.5,
             opener_temperature: 0.0,
             castling: 1.0,
+            depth: 2,
         }
     }
 }
