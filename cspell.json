@@ -3,6 +3,8 @@
     "shakmaty",
     "zobrist",
     "unparseable",
-    "kennanhunter"
+    "kennanhunter",
+    "match m.role() {\n\n    }",
+    "backrank"
   ]
 }

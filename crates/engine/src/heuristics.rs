@@ -28,6 +28,9 @@ pub struct PersonalityConfig {
     pub castling_weight: f32,
     pub material_weight: f32,
 
+    pub developed_major_pieces_weight: f32,
+
+
     pub play_outside_of_book: bool,
 
     /// 0.0 means always choose the top move, 1.0 means completely random
@@ -61,6 +64,7 @@ impl Default for PersonalityConfig {
             material_weight: 5.0,
             temperature: 0.0,
             castling_weight: 1.0,
+            developed_major_pieces_weight: 1.0,
             min_depth: 2,
             max_depth: 5,
             play_outside_of_book: false,
@@ -81,6 +85,7 @@ pub struct ConsiderationScore {
     knight_fork_score: f32,
     knight_approaching_f6_score: f32,
     castling_score: f32,
+    developed_major_pieces_score: f32,
 }
 
 impl ConsiderationScore {
@@ -95,6 +100,7 @@ impl ConsiderationScore {
             knight_fork_score,
             knight_approaching_f6_score,
             castling_score,
+            developed_major_pieces_score,
         } = self;
 
         checkmate_score
@@ -105,6 +111,7 @@ impl ConsiderationScore {
             + knight_fork_score
             + knight_approaching_f6_score
             + castling_score
+            + developed_major_pieces_score
     }
 }
 
@@ -132,6 +139,24 @@ pub fn consideration_score_for_move(
         knight_approaching_f6_score: score_knight_approaching_f6(after)
             * weights.knight_approaching_f6_weight,
         castling_score: score_did_castle(m) * weights.castling_weight,
+        developed_major_pieces_score: score_developed_major_pieces(m, side).unwrap_or(0.0) * weights.developed_major_pieces_weight,
+    }
+}
+
+fn score_developed_major_pieces(m: &Move, side: Color) -> Option<f32> {
+    if m.from()?.rank() == side.backrank() && m.to().rank() != side.backrank()
+    {
+        match m.role() {
+            Role::Pawn =>  None,
+            // todo: Make these tunable?
+            Role::Knight =>  Some(0.7),
+            Role::Bishop =>  Some(0.8),
+            Role::Rook =>  Some(1.0),
+            Role::Queen =>  Some(0.2),
+            Role::King => Some(-0.1),
+        }
+    } else {
+        None
     }
 }
 
@@ -240,12 +265,6 @@ pub fn score_knight_approaching_f6(after: &Chess) -> f32 {
         }
     }
     score
-}
-
-/// Reward reaching a position seen in game history.
-pub fn score_seen(after: &Chess, seen: &HashSet<u64>) -> f32 {
-    let hash: Zobrist64 = after.zobrist_hash(EnPassantMode::Legal);
-    if seen.contains(&hash.0) { 1.0 } else { 0.0 }
 }
 
 /// reward a move that castles

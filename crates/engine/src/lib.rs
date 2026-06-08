@@ -141,6 +141,7 @@ impl ChessBot {
         knight_approaching_f6_weight: f32,
         material_weight: f32,
         castling_weight: f32,
+        developed_major_pieces_weight: f32,
         min_depth: u32,
         max_depth: u32,
         top_level_moves_to_consider: u32,
@@ -157,6 +158,7 @@ impl ChessBot {
             knight_fork_weight,
             knight_approaching_f6_weight,
             castling_weight,
+            developed_major_pieces_weight,
             min_depth,
             max_depth,
             material_weight,
@@ -240,7 +242,7 @@ impl ChessBot {
                 m: *m,
                 eval_reason: EvalReason::Considered {
                     consideration_score: *consideration_score,
-                    tree_score: 0.0,
+                    tree_score: todo!("Calculate minmax for this move"),
                 },
             });
         }
