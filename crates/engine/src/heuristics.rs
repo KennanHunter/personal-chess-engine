@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 use shakmaty::zobrist::Zobrist64;
-use shakmaty::{attacks, Chess, Color, EnPassantMode, Move, Position, Rank, Role, Square};
+use shakmaty::{Chess, Color, EnPassantMode, Move, Position, Rank, Role, Square, attacks};
 use std::collections::HashSet;
 
 /// Tunable weights for each heuristic. Owned by the WASM layer and passed into
@@ -27,7 +27,6 @@ pub struct PersonalityConfig {
 
     pub castling_weight: f32,
     pub material_weight: f32,
-
 
     pub play_outside_of_book: bool,
 
@@ -49,7 +48,6 @@ pub struct PersonalityConfig {
     /// this intentionally makes the bot susceptible to attacks that overload the amount of
     /// major piece captures the bot considers
     pub max_moves_to_consider_in_tree: u32,
-
 }
 
 impl Default for PersonalityConfig {
@@ -138,9 +136,10 @@ pub fn consideration_score_for_move(
 }
 
 fn score_material(after: &Chess, side: Color) -> f32 {
-    let material_count: u8 = after.board().material_side(side).iter().sum();
+    let our_material_count: u8 = after.board().material_side(side).iter().sum();
+    let opponent_material_count: u8 = after.board().material_side(side.other()).iter().sum();
 
-    material_count.into()
+    our_material_count as f32 - opponent_material_count as f32
 }
 
 /// Reward rooks on the 7th/8th rank or cutting off the enemy king.
@@ -246,18 +245,10 @@ pub fn score_knight_approaching_f6(after: &Chess) -> f32 {
 /// Reward reaching a position seen in game history.
 pub fn score_seen(after: &Chess, seen: &HashSet<u64>) -> f32 {
     let hash: Zobrist64 = after.zobrist_hash(EnPassantMode::Legal);
-    if seen.contains(&hash.0) {
-        1.0
-    } else {
-        0.0
-    }
+    if seen.contains(&hash.0) { 1.0 } else { 0.0 }
 }
 
 /// reward a move that castles
 pub fn score_did_castle(m: &Move) -> f32 {
-    if m.is_castle() {
-        1.0
-    } else {
-        0.0
-    }
+    if m.is_castle() { 1.0 } else { 0.0 }
 }

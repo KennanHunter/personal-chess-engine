@@ -45,7 +45,9 @@ where
 
 #[derive(Serialize, Clone)]
 pub enum EvalReason {
-    OpenerBook { prevalence: u32 },
+    OpenerBook {
+        prevalence: u32,
+    },
     Considered {
         consideration_score: ConsiderationScore,
         tree_score: f32,

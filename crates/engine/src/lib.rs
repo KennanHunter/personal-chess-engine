@@ -5,7 +5,7 @@ pub mod move_possibility;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pgn;
 
-use heuristics::{consideration_score_for_move, ConsiderationScore, PersonalityConfig};
+use heuristics::{ConsiderationScore, PersonalityConfig, consideration_score_for_move};
 use move_possibility::{EvalReason, PossibleMove};
 use opening::OpeningNode;
 use shakmaty::uci::UciMove;
@@ -227,13 +227,13 @@ impl ChessBot {
             a_score.total_cmp(&b_score)
         });
 
-        let (moves_to_consider, moves_to_prune) = possible_move_weights.split_at(
+        let (moves_to_consider, moves_to_prune) = possible_move_weights.split_at(usize::min(
             self.personality_config
                 .top_level_moves_to_consider
                 .try_into()
                 .expect("u32 into usize valid"),
-        );
-
+            possible_move_weights.len(),
+        ));
 
         for (m, consideration_score) in moves_to_consider {
             final_moves.push(PossibleMove {
@@ -361,9 +361,11 @@ mod tests {
         // From the start, e4 is the only booked first move.
         let root = bot.get_move_possibilities("");
         assert_eq!(uci_set(&root.0), HashSet::from(["e2e4".to_string()]));
-        assert!(root.0
-            .iter()
-            .all(|pm| matches!(pm.eval_reason, EvalReason::OpenerBook { prevalence: _ })));
+        assert!(
+            root.0
+                .iter()
+                .all(|pm| matches!(pm.eval_reason, EvalReason::OpenerBook { prevalence: _ }))
+        );
 
         // After 1.e4, both booked replies (e5 and c5) are returned.
         assert_eq!(

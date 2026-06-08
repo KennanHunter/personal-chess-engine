@@ -87,8 +87,9 @@ impl ChessBot {
 
         serde_wasm_bindgen::to_value(&PublicMoveResponse {
             possible,
-            chosen: chosen.to_uci().to_string()
-        }).expect("PossibleMove serialization failed")
+            chosen: chosen.to_uci().to_string(),
+        })
+        .expect("PossibleMove serialization failed")
     }
 }
 
