@@ -19,10 +19,9 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
+    use engine::pgn::pgn_to_uci_lines;
     use std::io::{self, Read, Write};
     use std::process::ExitCode;
-
-    use engine::pgn::pgn_to_uci_lines;
 
     pub fn run() -> ExitCode {
         let pgn = match read_input() {

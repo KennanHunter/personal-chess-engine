@@ -2,6 +2,11 @@
 resolver = "2"
 members = ["crates/convert_pgn","crates/engine", "crates/web"]
 
+[workspace.package]
+edition= "2024"
+version = "0.1.2"
+repository = "https://github.com/KennanHunter/personal-chess-engine"
+
 [profile.release]
 # Tell `rustc` to optimize for small code size.
 opt-level = "s"

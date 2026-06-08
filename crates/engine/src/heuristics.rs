@@ -5,50 +5,108 @@
 //! in [`PersonalityWeights`], a plain config that the public WASM layer owns and
 //! passes into [`score_move`] on every single move evaluation.
 
-use std::collections::HashSet;
-
+use serde::Serialize;
 use shakmaty::zobrist::Zobrist64;
-use shakmaty::{Chess, Color, EnPassantMode, Move, Position, Rank, Role, Square, attacks};
+use shakmaty::{attacks, Chess, Color, EnPassantMode, Move, Position, Rank, Role, Square};
+use std::collections::HashSet;
 
 /// Tunable weights for each heuristic. Owned by the WASM layer and passed into
 /// every move evaluation, so personality can be adjusted live from JS.
 #[derive(Clone, Copy, Debug)]
-pub struct PersonalityWeights {
+pub struct PersonalityConfig {
     /// Reward rooks cutting off the enemy king (ladder-mate pattern).
-    pub ladder_mate: f32,
+    pub ladder_mate_weight: f32,
     /// Reward capturing an enemy bishop with one of our knights.
-    pub knight_bishop_trade: f32,
+    pub knight_bishop_trade_weight: f32,
     /// Reward a knight attacking an enemy bishop.
-    pub knight_eyeing_bishop: f32,
+    pub knight_eyeing_bishop_weight: f32,
     /// Reward a knight move that forks high-value pieces.
-    pub knight_fork: f32,
+    pub knight_fork_weight: f32,
     /// Reward knights that are one hop away from f6/f3.
-    pub knight_approaching_f6: f32,
-    /// Reward reaching a position we have been in before (from game history).
-    pub seen_position: f32,
-    /// Spread of opener randomness
-    pub opener_temperature: f32,
-    /// Castling
-    pub castling: f32,
-    /// Depth
-    // TODO:
-    #[allow(dead_code)]
-    pub depth: u32,
+    pub knight_approaching_f6_weight: f32,
+
+    pub castling_weight: f32,
+    pub material_weight: f32,
+
+
+    pub play_outside_of_book: bool,
+
+    /// 0.0 means always choose the top move, 1.0 means completely random
+    pub temperature: f32,
+
+    pub min_depth: u32,
+
+    pub max_depth: u32,
+
+    /// Total number of moves to consider at the top level
+    pub top_level_moves_to_consider: u32,
+
+    /// Minimum moves to consider in the game tree when evaluating a specific move
+    /// this is minim moves because we always consider major piece captures, up to a maximum
+    pub min_moves_to_consider_in_tree: u32,
+
+    /// Minimum moves to consider in the game tree when evaluating a specific move
+    /// this intentionally makes the bot susceptible to attacks that overload the amount of
+    /// major piece captures the bot considers
+    pub max_moves_to_consider_in_tree: u32,
+
 }
 
-impl Default for PersonalityWeights {
+impl Default for PersonalityConfig {
     fn default() -> Self {
         Self {
-            ladder_mate: 2.0,
-            knight_bishop_trade: 3.0,
-            knight_eyeing_bishop: 1.0,
-            knight_fork: 4.0,
-            knight_approaching_f6: 0.8,
-            seen_position: 2.5,
-            opener_temperature: 0.0,
-            castling: 1.0,
-            depth: 2,
+            ladder_mate_weight: 2.0,
+            knight_bishop_trade_weight: 3.0,
+            knight_eyeing_bishop_weight: 1.0,
+            knight_fork_weight: 4.0,
+            knight_approaching_f6_weight: 0.8,
+            material_weight: 5.0,
+            temperature: 0.0,
+            castling_weight: 1.0,
+            min_depth: 2,
+            max_depth: 5,
+            play_outside_of_book: false,
+            top_level_moves_to_consider: 8,
+            max_moves_to_consider_in_tree: 5,
+            min_moves_to_consider_in_tree: 3,
         }
+    }
+}
+
+#[derive(Serialize, Clone, Copy)]
+pub struct ConsiderationScore {
+    checkmate_score: f32,
+    material_score: f32,
+    ladder_mate_score: f32,
+    knight_bishop_trade_score: f32,
+    knight_eyeing_bishop_score: f32,
+    knight_fork_score: f32,
+    knight_approaching_f6_score: f32,
+    castling_score: f32,
+}
+
+impl ConsiderationScore {
+    pub fn score(&self) -> f32 {
+        // if we ever forget to update this we get an error
+        let ConsiderationScore {
+            checkmate_score,
+            material_score,
+            ladder_mate_score,
+            knight_bishop_trade_score,
+            knight_eyeing_bishop_score,
+            knight_fork_score,
+            knight_approaching_f6_score,
+            castling_score,
+        } = self;
+
+        checkmate_score
+            + material_score
+            + ladder_mate_score
+            + knight_bishop_trade_score
+            + knight_eyeing_bishop_score
+            + knight_fork_score
+            + knight_approaching_f6_score
+            + castling_score
     }
 }
 
@@ -57,23 +115,32 @@ impl Default for PersonalityWeights {
 /// `before` is the position to move in, `m` the candidate move, and `after` the
 /// position that results from playing it. `seen` is the set of Zobrist hashes
 /// of positions from game history.
-pub fn score_move(
+pub fn consideration_score_for_move(
     before: &Chess,
     m: &Move,
     after: &Chess,
-    weights: &PersonalityWeights,
-    seen: &HashSet<u64>,
-) -> f32 {
+    weights: &PersonalityConfig,
+) -> ConsiderationScore {
     let side = before.turn();
-    let mut score = 0.0;
-    score += score_ladder_mate(after, side) * weights.ladder_mate;
-    score += score_knight_bishop_trade(before, after) * weights.knight_bishop_trade;
-    score += score_knight_eyeing_bishop(after) * weights.knight_eyeing_bishop;
-    score += score_knight_fork(before, m, after) * weights.knight_fork;
-    score += score_knight_approaching_f6(after) * weights.knight_approaching_f6;
-    score += score_seen(after, seen) * weights.seen_position;
-    score += score_did_castle(m) * weights.castling;
-    score
+    ConsiderationScore {
+        checkmate_score: if after.is_checkmate() { 100.0 } else { 0.0 },
+        material_score: score_material(after, side) * weights.material_weight,
+        ladder_mate_score: score_ladder_mate(after, side) * weights.ladder_mate_weight,
+        knight_bishop_trade_score: score_knight_bishop_trade(before, after)
+            * weights.knight_bishop_trade_weight,
+        knight_eyeing_bishop_score: score_knight_eyeing_bishop(after)
+            * weights.knight_eyeing_bishop_weight,
+        knight_fork_score: score_knight_fork(before, m, after) * weights.knight_fork_weight,
+        knight_approaching_f6_score: score_knight_approaching_f6(after)
+            * weights.knight_approaching_f6_weight,
+        castling_score: score_did_castle(m) * weights.castling_weight,
+    }
+}
+
+fn score_material(after: &Chess, side: Color) -> f32 {
+    let material_count: u8 = after.board().material_side(side).iter().sum();
+
+    material_count.into()
 }
 
 /// Reward rooks on the 7th/8th rank or cutting off the enemy king.
@@ -152,7 +219,7 @@ pub fn score_knight_fork(before: &Chess, m: &Move, after: &Chess) -> f32 {
     let attacked = attacks::knight_attacks(dest) & board.by_color(opp) & high_value;
 
     match attacked.count() {
-        2 => 1.0,        // fork
+        2 => 1.0,           // fork
         n if n >= 3 => 1.5, // royal-family fork
         _ => 0.0,
     }
@@ -187,7 +254,7 @@ pub fn score_seen(after: &Chess, seen: &HashSet<u64>) -> f32 {
 }
 
 /// reward a move that castles
-pub fn score_did_castle( m: &Move) -> f32 {
+pub fn score_did_castle(m: &Move) -> f32 {
     if m.is_castle() {
         1.0
     } else {

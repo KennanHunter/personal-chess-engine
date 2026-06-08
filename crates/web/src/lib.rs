@@ -9,6 +9,7 @@
 
 mod utils;
 
+use engine::PossibleMoveList;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -26,9 +27,7 @@ impl ChessBot {
 
         inner.load_games(include_str!("games.txt"));
 
-        ChessBot {
-            inner,
-        }
+        ChessBot { inner }
     }
 
     /// Adjust personality weights at runtime (wire these up to JS sliders).
@@ -40,21 +39,31 @@ impl ChessBot {
         knight_eyeing_bishop: f32,
         knight_fork: f32,
         knight_approaching_f6: f32,
-        seen_position: f32,
-        opener_temperature: f32,
+        material_weight: f32,
         castling: f32,
-        depth: u32,
+        min_depth: u32,
+        max_depth: u32,
+        top_level_moves_to_consider: u32,
+        max_moves_to_consider_in_tree: u32,
+        min_moves_to_consider_in_tree: u32,
+        play_outside_of_tree: bool,
+        temperature: f32,
     ) {
-        self.inner.set_weights(
+        self.inner.set_config(
             ladder_mate,
             knight_bishop_trade,
             knight_eyeing_bishop,
             knight_fork,
             knight_approaching_f6,
-            seen_position,
-            opener_temperature,
+            material_weight,
             castling,
-            depth,
+            min_depth,
+            max_depth,
+            top_level_moves_to_consider,
+            max_moves_to_consider_in_tree,
+            min_moves_to_consider_in_tree,
+            play_outside_of_tree,
+            temperature,
         );
     }
 
@@ -63,13 +72,25 @@ impl ChessBot {
     }
 
     /// Main entry point. `moves_played` is the comma-separated UCI history.
-    /// Returns a UCI move string, or an empty string if the game is over.
-    pub fn get_move(&self, moves_played: &str) -> String {
-        self.inner.get_move(moves_played)
+    /// Returns the candidate moves as a JS array of `PossibleMove` objects
+    /// (empty when the game is over).
+    pub fn get_move(&self, moves_played: &str) -> JsValue {
+        #[derive(serde::Serialize)]
+        struct PublicMoveResponse {
+            possible: PossibleMoveList,
+            chosen: String,
+        }
+
+        let possible = self.inner.get_move_possibilities(moves_played);
+
+        let chosen = possible.chose_move(self.inner.get_temperature());
+
+        serde_wasm_bindgen::to_value(&PublicMoveResponse {
+            possible,
+            chosen: chosen.to_uci().to_string()
+        }).expect("PossibleMove serialization failed")
     }
 }
-
-
 
 impl Default for ChessBot {
     fn default() -> Self {

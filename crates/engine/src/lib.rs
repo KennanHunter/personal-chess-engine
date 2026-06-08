@@ -1,17 +1,17 @@
 mod heuristics;
 mod opening;
 
+pub mod move_possibility;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pgn;
 
-use std::collections::HashSet;
-
+use heuristics::{consideration_score_for_move, ConsiderationScore, PersonalityConfig};
+use move_possibility::{EvalReason, PossibleMove};
+use opening::OpeningNode;
 use shakmaty::uci::UciMove;
 use shakmaty::zobrist::Zobrist64;
-use shakmaty::{CastlingMode, Chess, EnPassantMode, Move, Position};
-
-use heuristics::{score_move, PersonalityWeights};
-use opening::OpeningNode;
+use shakmaty::{Chess, EnPassantMode, Move, Position};
+use std::collections::HashSet;
 
 /// Replay a comma-separated UCI move history into a position.
 ///
@@ -38,6 +38,44 @@ fn replay_moves(move_history: &str) -> Chess {
     pos
 }
 
+/// Parse a comma-separated UCI history (e.g. `"e2e4,e7e5,g1f3"`) into moves.
+///
+/// UCI parsing is position-independent, so this needs no board context.
+/// Unparseable tokens stop the parse early, mirroring `replay_moves`.
+fn parse_uci_history(moves_played: &str) -> Vec<UciMove> {
+    let mut history = Vec::new();
+    for raw in moves_played.split(',') {
+        let uci = raw.trim();
+        if uci.is_empty() {
+            continue;
+        }
+        match uci.parse::<UciMove>() {
+            Ok(m) => history.push(m),
+            Err(_) => break,
+        }
+    }
+    history
+}
+
+/// Sample an index proportionally to its weight using browser-compatible RNG.
+fn weighted_sample_index(weights: &[f32]) -> usize {
+    let total: f32 = weights.iter().sum();
+
+    let mut rng_bytes = [0u8; 4];
+    getrandom::getrandom(&mut rng_bytes).expect("rng failed");
+    let rand_val = u32::from_le_bytes(rng_bytes) as f32 / u32::MAX as f32;
+    let threshold = rand_val * total;
+
+    let mut cumulative = 0.0;
+    for (i, &w) in weights.iter().enumerate() {
+        cumulative += w;
+        if cumulative >= threshold {
+            return i;
+        }
+    }
+    weights.len() - 1
+}
+
 /// Sample one move proportionally to its weight using browser-compatible RNG.
 fn weighted_sample(moves: &[Move], weights: &[f32]) -> Move {
     let total: f32 = weights.iter().sum();
@@ -60,7 +98,7 @@ fn weighted_sample(moves: &[Move], weights: &[f32]) -> Move {
 pub struct ChessBot {
     opening_tree: OpeningNode,
     seen_positions: HashSet<u64>,
-    weights: PersonalityWeights,
+    personality_config: PersonalityConfig,
 }
 
 impl Default for ChessBot {
@@ -68,15 +106,13 @@ impl Default for ChessBot {
         Self {
             opening_tree: OpeningNode::new(),
             seen_positions: HashSet::new(),
-            weights: PersonalityWeights::default(),
+            personality_config: PersonalityConfig::default(),
         }
     }
 }
 
 impl ChessBot {
     pub fn new() -> ChessBot {
-        
-
         ChessBot::default()
     }
 
@@ -89,82 +125,191 @@ impl ChessBot {
             if line.is_empty() {
                 continue;
             }
-            self.opening_tree.insert(line);
+            self.opening_tree.insert(&parse_uci_history(line));
             self.record_seen_positions(line);
         }
     }
 
     /// Adjust personality weights at runtime (wire these up to JS sliders).
     #[allow(clippy::too_many_arguments)]
-    pub fn set_weights(
+    pub fn set_config(
         &mut self,
-        ladder_mate: f32,
-        knight_bishop_trade: f32,
-        knight_eyeing_bishop: f32,
-        knight_fork: f32,
-        knight_approaching_f6: f32,
-        seen_position: f32,
-        opener_temperature: f32,
-        castling: f32,
-        depth: u32,
+        ladder_mate_weight: f32,
+        knight_bishop_trade_weight: f32,
+        knight_eyeing_bishop_weight: f32,
+        knight_fork_weight: f32,
+        knight_approaching_f6_weight: f32,
+        material_weight: f32,
+        castling_weight: f32,
+        min_depth: u32,
+        max_depth: u32,
+        top_level_moves_to_consider: u32,
+        max_moves_to_consider_in_tree: u32,
+        min_moves_to_consider_in_tree: u32,
+        play_outside_of_book: bool,
+        temperature: f32,
     ) {
-        self.weights = PersonalityWeights {
-            ladder_mate,
-            knight_bishop_trade,
-            knight_eyeing_bishop,
-            knight_fork,
-            knight_approaching_f6,
-            seen_position,
-            opener_temperature,
-            castling,
-            depth,
+        self.personality_config = PersonalityConfig {
+            temperature,
+            ladder_mate_weight,
+            knight_bishop_trade_weight,
+            knight_eyeing_bishop_weight,
+            knight_fork_weight,
+            knight_approaching_f6_weight,
+            castling_weight,
+            min_depth,
+            max_depth,
+            material_weight,
+            top_level_moves_to_consider,
+            max_moves_to_consider_in_tree,
+            min_moves_to_consider_in_tree,
+            play_outside_of_book,
         };
     }
 
     pub fn how_many_times_game_seen(&self, moves_played: &str) -> u32 {
-        let history: Vec<&str> = if moves_played.is_empty() {
-            Vec::new()
-        } else {
-            moves_played.split(',').map(str::trim).collect()
-        };
-
-        self.opening_tree.count(&history)
+        self.opening_tree.count(&parse_uci_history(moves_played))
     }
 
     /// Main entry point. `moves_played` is the comma-separated UCI history.
     /// Returns a UCI move string, or an empty string if the game is over.
-    pub fn get_move(&self, moves_played: &str) -> String {
-        let history: Vec<&str> = if moves_played.is_empty() {
-            Vec::new()
-        } else {
-            moves_played.split(',').map(str::trim).collect()
-        };
+    pub fn get_move_possibilities(&self, moves_played: &str) -> PossibleMoveList {
+        let history = parse_uci_history(moves_played);
+        let pos = replay_moves(moves_played);
+        let mut final_moves = Vec::new();
 
-        // 1. Opening book.
-        if let Some(book) = self
-            .opening_tree
-            .lookup(&history, self.weights.opener_temperature)
-        {
-            return book;
+        // 1. Opening book: return every booked continuation that is legal here.
+        if let Some(book) = self.opening_tree.lookup(&history) {
+            let book_moves: Vec<PossibleMove> = book
+                .iter()
+                .filter_map(|(uci, count)| Some((uci.to_move(&pos).ok()?, count)))
+                .map(|(m, count)| PossibleMove {
+                    m,
+                    eval_reason: EvalReason::OpenerBook { prevalence: *count },
+                })
+                .collect();
+
+            if !book_moves.is_empty() {
+                if self.personality_config.play_outside_of_book {
+                    final_moves.extend(book_moves)
+                } else {
+                    return PossibleMoveList(book_moves);
+                }
+            }
         }
 
         // 2. Weighted-random selection with personality heuristics.
-        let pos = replay_moves(moves_played);
         let legals = pos.legal_moves();
         if legals.is_empty() {
-            return String::new();
+            return PossibleMoveList(Vec::new());
         }
 
-        let weights: Vec<f32> = legals
-            .iter()
+        let mut possible_move_weights: Vec<(Move, ConsiderationScore)> = legals
+            .into_iter()
             .map(|m| {
-                let after = pos.clone().play(*m).expect("legal move failed to play");
-                1.0 + score_move(&pos, m, &after, &self.weights, &self.seen_positions)
+                let after = pos.clone().play(m).expect("legal move failed to play");
+                (
+                    m,
+                    consideration_score_for_move(&pos, &m, &after, &self.personality_config),
+                )
             })
             .collect();
 
-        let chosen = weighted_sample(&legals, &weights);
-        UciMove::from_move(chosen, CastlingMode::Standard).to_string()
+        possible_move_weights.sort_by(|(_, a_weight), (_, b_weight)| {
+            let a_score = a_weight.score();
+            let b_score = b_weight.score();
+
+            if !a_score.is_finite() || !b_score.is_finite() {
+                // Prevents issues with total_cmp vs .cmp
+                panic!("Move weights should be finite");
+            }
+
+            a_score.total_cmp(&b_score)
+        });
+
+        let (moves_to_consider, moves_to_prune) = possible_move_weights.split_at(
+            self.personality_config
+                .top_level_moves_to_consider
+                .try_into()
+                .expect("u32 into usize valid"),
+        );
+
+
+        for (m, consideration_score) in moves_to_consider {
+            final_moves.push(PossibleMove {
+                m: *m,
+                eval_reason: EvalReason::Considered {
+                    consideration_score: *consideration_score,
+                    tree_score: 0.0,
+                },
+            });
+        }
+
+        for (m, consideration_score) in moves_to_prune {
+            final_moves.push(PossibleMove {
+                m: *m,
+                eval_reason: EvalReason::Pruned {
+                    consideration_score: *consideration_score,
+                },
+            });
+        }
+
+        PossibleMoveList(final_moves)
+    }
+
+    pub fn get_temperature(&self) -> f32 {
+        self.personality_config.temperature
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(transparent)]
+pub struct PossibleMoveList(pub Vec<PossibleMove>);
+
+impl PossibleMoveList {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Score every move and sample one according to `temperature`.
+    ///
+    /// `temperature` is clamped to `[0.0, 1.0]`:
+    /// - `0.0` always returns the highest-scoring move.
+    /// - `1.0` picks a move completely at random (uniform).
+    /// - values in between sharpen/flatten the score-weighted distribution,
+    ///   with `0.5` sampling proportionally to (shifted) scores.
+    pub fn chose_move(&self, temperature: f32) -> PossibleMove {
+        let moves = &self.0;
+        assert!(!moves.is_empty(), "chose_move called on empty move list");
+
+        let temperature = temperature.clamp(0.0, 1.0);
+
+        let scores: Vec<f32> = moves.iter().map(PossibleMove::score).collect();
+
+        // Index of the best-scoring move (used directly at temperature 0.0).
+        let best_idx = scores
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(i, _)| i)
+            .expect("non-empty move list has a max");
+
+        if temperature == 0.0 {
+            return moves[best_idx].clone();
+        }
+
+        // Shift scores so the lowest becomes a small positive base, keeping
+        // ordering intact while letting us exponentiate by a sharpness factor.
+        let min_score = scores.iter().cloned().fold(f32::INFINITY, f32::min);
+        const EPSILON: f32 = 1e-6;
+        let bases: Vec<f32> = scores.iter().map(|s| s - min_score + EPSILON).collect();
+
+        // sharpness: temperature 1.0 -> 0 (uniform), -> infinity as temperature -> 0 (argmax).
+        let sharpness = 1.0 / temperature - 1.0;
+        let weights: Vec<f32> = bases.iter().map(|b| b.powf(sharpness)).collect();
+
+        let chosen = weighted_sample_index(&weights);
+        moves[chosen].clone()
     }
 }
 
@@ -180,7 +325,11 @@ impl ChessBot {
             if uci.is_empty() {
                 continue;
             }
-            let m = match uci.parse::<UciMove>().ok().and_then(|u| u.to_move(&pos).ok()) {
+            let m = match uci
+                .parse::<UciMove>()
+                .ok()
+                .and_then(|u| u.to_move(&pos).ok())
+            {
                 Some(m) => m,
                 None => break,
             };
@@ -194,34 +343,57 @@ impl ChessBot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shakmaty::CastlingMode;
+
+    /// Collect the returned moves as UCI strings for order-independent checks.
+    fn uci_set(moves: &[PossibleMove]) -> HashSet<String> {
+        moves
+            .iter()
+            .map(|pm| UciMove::from_move(pm.m, CastlingMode::Standard).to_string())
+            .collect()
+    }
 
     #[test]
-    fn book_move_is_returned_from_history() {
+    fn book_moves_are_returned_from_history() {
         let mut bot = ChessBot::default();
         bot.load_games("e2e4,e7e5,g1f3\ne2e4,e7e5,g1f3\ne2e4,c7c5");
 
-        // The most-played first move is e4.
-        assert_eq!(bot.get_move(""), "e2e4");
-        // After 1.e4, the booked reply is e5 (played twice vs c5 once).
-        assert_eq!(bot.get_move("e2e4"), "e7e5");
-        // After 1.e4 e5, the booked reply is Nf3.
-        assert_eq!(bot.get_move("e2e4,e7e5"), "g1f3");
+        // From the start, e4 is the only booked first move.
+        let root = bot.get_move_possibilities("");
+        assert_eq!(uci_set(&root.0), HashSet::from(["e2e4".to_string()]));
+        assert!(root.0
+            .iter()
+            .all(|pm| matches!(pm.eval_reason, EvalReason::OpenerBook { prevalence: _ })));
+
+        // After 1.e4, both booked replies (e5 and c5) are returned.
+        assert_eq!(
+            uci_set(&bot.get_move_possibilities("e2e4").0),
+            HashSet::from(["e7e5".to_string(), "c7c5".to_string()])
+        );
+
+        // After 1.e4 e5, the only booked reply is Nf3.
+        assert_eq!(
+            uci_set(&bot.get_move_possibilities("e2e4,e7e5").0),
+            HashSet::from(["g1f3".to_string()])
+        );
     }
 
     #[test]
-    fn out_of_book_returns_a_legal_move() {
+    fn out_of_book_returns_legal_moves() {
         let bot = ChessBot::default(); // empty book
-        let mv = bot.get_move("");
-        // No book, so it falls through to weighted sampling: must be a legal
-        // opening move parseable as UCI.
-        let parsed: UciMove = mv.parse().expect("returned a valid UCI move");
-        assert!(parsed.to_move(&Chess::default()).is_ok());
+        let moves = bot.get_move_possibilities("");
+        // No book, so it falls through to heuristics and returns the legal moves.
+        assert!(!moves.is_empty());
+        for pm in &moves.0 {
+            let uci = UciMove::from_move(pm.m, CastlingMode::Standard);
+            assert!(uci.to_move(&Chess::default()).is_ok());
+        }
     }
 
     #[test]
-    fn terminal_position_returns_empty_string() {
+    fn terminal_position_returns_no_moves() {
         // Fool's mate: 1. f3 e5 2. g4 Qh4# — checkmate, no legal moves.
         let bot = ChessBot::default();
-        assert_eq!(bot.get_move("f2f3,e7e5,g2g4,d8h4"), "");
+        assert!(bot.get_move_possibilities("f2f3,e7e5,g2g4,d8h4").is_empty());
     }
 }

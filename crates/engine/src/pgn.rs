@@ -5,12 +5,11 @@
 //! of the WASM build. Use it to convert a downloaded PGN into the `\n`-separated,
 //! comma-separated UCI format that [`crate::ChessBot::load_games`] expects.
 
-use std::io;
-use std::ops::ControlFlow;
-
 use pgn_reader::{Reader, SanPlus, Visitor};
 use shakmaty::uci::UciMove;
 use shakmaty::{CastlingMode, Chess, Position};
+use std::io;
+use std::ops::ControlFlow;
 
 /// Visitor that replays a game's mainline and collects each move as UCI.
 struct UciCollector;
@@ -37,11 +36,7 @@ impl Visitor for UciCollector {
         })
     }
 
-    fn san(
-        &mut self,
-        state: &mut Self::Movetext,
-        san_plus: SanPlus,
-    ) -> ControlFlow<Self::Output> {
+    fn san(&mut self, state: &mut Self::Movetext, san_plus: SanPlus) -> ControlFlow<Self::Output> {
         match san_plus.san.to_move(&state.pos) {
             Ok(m) => {
                 state
