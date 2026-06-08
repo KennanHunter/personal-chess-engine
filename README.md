@@ -4,7 +4,7 @@ A small chaotic chess bot compiled to WebAssembly based on my games using weight
 
 ## How it works
 
-1. **Opening book** — replays moves from your game history; while in book, it
+1. **Opening book** — replays moves from my game history; while in book, it
    plays the most-frequent continuation sampled with a temperature.
 2. **Out of book** — scores every legal move with the heuristics below, then
    samples one proportionally to its weight (base weight `1.0`, so any legal
