@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use shakmaty::zobrist::Zobrist64;
-use shakmaty::{attacks, Chess, Color, EnPassantMode, Move, Position, Rank, Role, Square};
+use shakmaty::{CastlingSide, Chess, Color, EnPassantMode, Move, Position, Rank, Role, Square, attacks};
 
 /// Tunable weights for each heuristic. Owned by the WASM layer and passed into
 /// every move evaluation, so personality can be adjusted live from JS.
@@ -27,7 +27,9 @@ pub struct PersonalityWeights {
     /// Reward reaching a position we have been in before (from game history).
     pub seen_position: f32,
     /// Spread of opener randomness
-    pub opener_temperature: f32
+    pub opener_temperature: f32,
+    /// Castling
+    pub castling: f32
 }
 
 impl Default for PersonalityWeights {
@@ -40,6 +42,7 @@ impl Default for PersonalityWeights {
             knight_approaching_f6: 0.8,
             seen_position: 2.5,
             opener_temperature: 0.0,
+            castling: 1.0,
         }
     }
 }
@@ -64,6 +67,7 @@ pub fn score_move(
     score += score_knight_fork(before, m, after) * weights.knight_fork;
     score += score_knight_approaching_f6(after) * weights.knight_approaching_f6;
     score += score_seen(after, seen) * weights.seen_position;
+    score += score_did_castle(m) * weights.castling;
     score
 }
 
@@ -171,6 +175,15 @@ pub fn score_knight_approaching_f6(after: &Chess) -> f32 {
 pub fn score_seen(after: &Chess, seen: &HashSet<u64>) -> f32 {
     let hash: Zobrist64 = after.zobrist_hash(EnPassantMode::Legal);
     if seen.contains(&hash.0) {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+/// reward a move that castles
+pub fn score_did_castle( m: &Move) -> f32 {
+    if m.is_castle() {
         1.0
     } else {
         0.0
