@@ -1,5 +1,5 @@
 [package]
-name = "chess-engine"
+name = "personal-chess-engine"
 version = "0.1.0"
 authors = ["Kennan Hunter <kennanhunter5@gmail.com>"]
 edition = "2021"
