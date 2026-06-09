@@ -6,9 +6,7 @@
 //! passes into [`score_move`] on every single move evaluation.
 
 use serde::Serialize;
-use shakmaty::zobrist::Zobrist64;
-use shakmaty::{Chess, Color, EnPassantMode, Move, Position, Rank, Role, Square, attacks};
-use std::collections::HashSet;
+use shakmaty::{Chess, Color, Move, Position, Rank, Role, Square, attacks};
 
 /// Tunable weights for each heuristic. Owned by the WASM layer and passed into
 /// every move evaluation, so personality can be adjusted live from JS.
@@ -29,7 +27,6 @@ pub struct PersonalityConfig {
     pub material_weight: f32,
 
     pub developed_major_pieces_weight: f32,
-
 
     pub play_outside_of_book: bool,
 
@@ -195,15 +192,14 @@ pub fn consideration_score_for_move(
 }
 
 fn score_developed_major_pieces(m: &Move, side: Color) -> Option<f32> {
-    if m.from()?.rank() == side.backrank() && m.to().rank() != side.backrank()
-    {
+    if m.from()?.rank() == side.backrank() && m.to().rank() != side.backrank() {
         match m.role() {
-            Role::Pawn =>  None,
+            Role::Pawn => None,
             // todo: Make these tunable?
-            Role::Knight =>  Some(0.7),
-            Role::Bishop =>  Some(0.8),
-            Role::Rook =>  Some(1.0),
-            Role::Queen =>  Some(0.2),
+            Role::Knight => Some(0.7),
+            Role::Bishop => Some(0.8),
+            Role::Rook => Some(1.0),
+            Role::Queen => Some(0.2),
             Role::King => Some(-0.1),
         }
     } else {

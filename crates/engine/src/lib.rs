@@ -79,25 +79,6 @@ fn weighted_sample_index(weights: &[f32]) -> usize {
     weights.len() - 1
 }
 
-/// Sample one move proportionally to its weight using browser-compatible RNG.
-fn weighted_sample(moves: &[Move], weights: &[f32]) -> Move {
-    let total: f32 = weights.iter().sum();
-
-    let mut rng_bytes = [0u8; 4];
-    getrandom::getrandom(&mut rng_bytes).expect("rng failed");
-    let rand_val = u32::from_le_bytes(rng_bytes) as f32 / u32::MAX as f32;
-    let threshold = rand_val * total;
-
-    let mut cumulative = 0.0;
-    for (m, &w) in moves.iter().zip(weights.iter()) {
-        cumulative += w;
-        if cumulative >= threshold {
-            return *m;
-        }
-    }
-    *moves.last().expect("called weighted_sample on no moves")
-}
-
 pub struct ChessBot {
     opening_tree: OpeningNode,
     seen_positions: HashSet<u64>,

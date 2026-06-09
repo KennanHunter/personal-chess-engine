@@ -1,0 +1,11 @@
+[package]
+name = "server"
+edition.workspace = true
+version.workspace = true
+repository.workspace = true
+
+[dependencies]
+shakmaty.workspace = true
+
+ruci = { git = "https://github.com/RaoniSilvestre/ruci/", branch = "deps/update-shakmaty", features = ["gui-sync"] }
+clap = { version = "4.6.1", features = ["derive"] }

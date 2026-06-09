@@ -6,7 +6,8 @@ repository.workspace = true
 version.workspace = true
 
 [dependencies]
-shakmaty = { version = "0.30", features = ["serde"] }
+shakmaty.workspace = true
+
 serde = { version = "1.0", features = ["derive"] }
 # `getrandom`'s `js` backend is enabled by the `web` crate for WASM builds;
 # feature unification means this dependency picks it up there automatically.

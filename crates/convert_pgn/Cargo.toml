@@ -4,4 +4,6 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+shakmaty.workspace = true
+
 engine = { path = "../engine" }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/convert_pgn","crates/engine", "crates/web"]
+members = ["crates/convert_pgn","crates/engine", "crates/server", "crates/web"]
 
 [workspace.package]
 edition= "2024"
@@ -11,3 +11,6 @@ repository = "https://github.com/KennanHunter/personal-chess-engine"
 # Tell `rustc` to optimize for small code size.
 opt-level = "s"
 lto = true
+
+[workspace.dependencies]
+shakmaty = { version = "0.30", features = ["serde"] }
