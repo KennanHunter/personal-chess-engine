@@ -213,17 +213,20 @@ impl ChessBot {
             a_score.total_cmp(&b_score)
         });
 
-        let (moves_to_consider, moves_to_prune) = possible_move_weights.split_at(usize::min(
+        let number_of_moves_to_consider = usize::min(
             self.personality_config
                 .top_level_moves_to_consider
                 .try_into()
                 .expect("u32 into usize valid"),
             possible_move_weights.len(),
-        ));
+        );
+
+        let (moves_to_consider, moves_to_prune) = possible_move_weights.split_at(number_of_moves_to_consider);
 
         for (m, consideration_score) in moves_to_consider {
             let after = pos.clone().play(*m).expect("legal move failed to play");
             let (tree_score, depth_searched) = self.tree_score_for_move(&pos, &after);
+
             final_moves.push(PossibleMove {
                 m: *m,
                 eval_reason: EvalReason::Considered {
@@ -403,7 +406,10 @@ impl PossibleMoveList {
 
         let temperature = temperature.clamp(0.0, 1.0);
 
-        let scores: Vec<f32> = moves.iter().map(PossibleMove::score).collect();
+        let scores: Vec<f32> = moves.iter().filter(|m| match m.eval_reason {
+             EvalReason::Pruned { consideration_score : _ } => false,
+             _ => true
+        }).map(PossibleMove::score).collect();
 
         // Index of the best-scoring move (used directly at temperature 0.0).
         let best_idx = scores
