@@ -12,6 +12,8 @@ mod utils;
 use engine::PossibleMoveList;
 use wasm_bindgen::prelude::*;
 
+const GAMES_TXT: &str = include_str!("games.txt");
+
 #[wasm_bindgen]
 pub struct ChessBot {
     inner: engine::ChessBot,
@@ -25,9 +27,31 @@ impl ChessBot {
 
         let mut inner = engine::ChessBot::new();
 
-        inner.load_games(include_str!("games.txt"));
+        inner.load_games(GAMES_TXT);
 
         ChessBot { inner }
+    }
+
+    /// Reload the built-in games with a player-color filter.
+    ///
+    /// `player` is matched against the `[White]`/`[Black]` tags baked into each
+    /// line. A game is kept when it satisfies either enabled side:
+    ///   - `include_white` && line's white player == `player`
+    ///   - `include_black` && line's black player == `player`
+    ///
+    /// If both flags are false, no games are loaded. If `player` is empty, the
+    /// full games set is reloaded regardless of the flags.
+    pub fn set_player_filter(&mut self, player: &str, include_white: bool, include_black: bool) {
+        self.inner.clear_games();
+
+        if player.is_empty() {
+            self.inner.load_games(GAMES_TXT);
+            return;
+        }
+
+        self.inner.load_games_filtered(GAMES_TXT, |white, black| {
+            (include_white && white == player) || (include_black && black == player)
+        });
     }
 
     /// Adjust personality weights at runtime (wire these up to JS sliders).

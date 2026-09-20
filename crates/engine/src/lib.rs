@@ -41,6 +41,17 @@ fn replay_moves(move_history: &str) -> Chess {
     pos
 }
 
+/// Split a game line of the form `white|black|uci,uci,...` into its three
+/// parts. Lines with no `|` are treated as legacy raw-UCI histories (no header),
+/// so the white and black slots come back as empty strings.
+fn parse_labeled_line(line: &str) -> (&str, &str, &str) {
+    let mut parts = line.splitn(3, '|');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(white), Some(black), Some(moves)) => (white, black, moves),
+        _ => ("", "", line),
+    }
+}
+
 /// Parse a comma-separated UCI history (e.g. `"e2e4,e7e5,g1f3"`) into moves.
 ///
 /// UCI parsing is position-independent, so this needs no board context.
@@ -100,17 +111,36 @@ impl ChessBot {
         ChessBot::default()
     }
 
-    /// Load game histories: one game per line, each a comma-separated UCI move
-    /// string (e.g. `"e2e4,e7e5,g1f3"`). Feeds both the opening book and the
-    /// seen-position set.
+    /// Drop all loaded games from the opening tree and seen-position set.
+    /// Personality config is left untouched.
+    pub fn clear_games(&mut self) {
+        self.opening_tree = OpeningNode::new();
+        self.seen_positions.clear();
+    }
+
+    /// Load game histories: one game per line, in the format
+    /// `white|black|uci,uci,...` (as produced by [`crate::pgn::pgn_to_uci_lines`]).
+    /// Lines that contain no `|` are treated as legacy raw-UCI histories.
+    /// Feeds both the opening book and the seen-position set.
     pub fn load_games(&mut self, data: &str) {
+        self.load_games_filtered(data, |_white, _black| true);
+    }
+
+    /// Same as [`Self::load_games`], but only ingests games for which `keep`
+    /// returns true. `keep` receives the white and black player names parsed
+    /// from the line header (empty strings when a name is missing).
+    pub fn load_games_filtered(&mut self, data: &str, mut keep: impl FnMut(&str, &str) -> bool) {
         for line in data.lines() {
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
-            self.opening_tree.insert(&parse_uci_history(line));
-            self.record_seen_positions(line);
+            let (white, black, moves) = parse_labeled_line(line);
+            if !keep(white, black) {
+                continue;
+            }
+            self.opening_tree.insert(&parse_uci_history(moves));
+            self.record_seen_positions(moves);
         }
     }
 
@@ -210,7 +240,7 @@ impl ChessBot {
                 panic!("Move weights should be finite");
             }
 
-            a_score.total_cmp(&b_score)
+            b_score.total_cmp(&a_score)
         });
 
         let number_of_moves_to_consider = usize::min(
