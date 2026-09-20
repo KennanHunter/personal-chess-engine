@@ -4,7 +4,7 @@ members = ["crates/convert_pgn","crates/engine", "crates/server", "crates/web"]
 
 [workspace.package]
 edition= "2024"
-version = "0.1.5"
+version = "0.1.6"
 repository = "https://github.com/KennanHunter/personal-chess-engine"
 
 [profile.release]
